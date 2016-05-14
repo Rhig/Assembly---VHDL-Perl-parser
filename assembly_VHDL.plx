@@ -1,9 +1,9 @@
 #!/usr/bin/perl
-#assembly_VHDL.plx
+#parser.plx
 use warnings;
 use strict;
-use integer; #important for integer division when converting decimal number to bit strings.
-sub setup; sub mode1n2_sub; sub mode1_sub; sub mode2_sub; sub mode3_sub; sub get_input; sub assembly_to_VHDL; sub parse_table; sub dec_to_10bit; sub dec_to_16bit; sub constant_assembly_to_VHDL; sub constant_VHDL_to_assembly; sub VHDL_to_assembly; sub hexa_to_dec;
+use Math::Round;
+sub dec_to_hexa; sub modulus_fractions; sub dec_to_bit_arr; sub bits_to_hexa; sub hexa_to_bits; sub bits_to_dec; sub hexa_to_dec; sub setup; sub mode1n2_sub; sub mode1_sub; sub mode2_sub; sub mode3_sub; sub get_input; sub assembly_to_VHDL; sub parse_table; sub dec_to_10bit; sub dec_to_16bit; sub constant_assembly_to_VHDL; sub constant_VHDL_to_assembly; sub VHDL_to_assembly;
 
 #globals:
 our %assembly;
@@ -12,12 +12,131 @@ our @header;
 our @constants;
 our @body;
 our @footer;
-our %dec2hexa = (0 => '0', 1 => '1', 2 => '2', 3 => '3',
-		 4 => '4', 5 => '5', 6 => '6', 7 => '7',
-		 8 => '8', 9 => '9', 10 => 'a', 11 => 'b',
-		 12 => 'c', 13 => 'd', 14 => 'e', 15 => 'f');
-our %hexa2dec = reverse %dec2hexa;
+our %bits2hexa = ("0000" => '0', "0001" => '1', "0010" => '2', "0011" => '3',
+		 "0100" => '4', "0101" => '5', "0110" => '6', "0111" => '7',
+		 "1000" => '8', "1001" => '9', "1010" => 'a', "1011" => 'b',
+		 "1100" => 'c', "1101" => 'd', "1110" => 'e', "1111" => 'f');
+our %hexa2bits = reverse %bits2hexa;
 our %addresses;
+
+##############################################################
+#Convert a number to a hexadecimal string of equal value
+#returns highest possible number if number is too high and lowest possible number if number is too low.
+sub dec_to_hexa($$$) {
+	my @bits = dec_to_bit_arr(@_);
+	return bits_to_hexa(join("",@bits),$_[1]);
+}
+
+##############################################################
+sub dec_to_bit_arr($$$) {
+	my $num = $_[0];
+	my $num_of_bits = $_[1];
+	my $Q15 = $_[2];
+	my @bits;
+	my $i = 1;
+	if ($Q15) {
+		$num = round($num * 2**($num_of_bits-1));
+	}
+	if ($num < 0) {
+		my $temp_num;
+#		if ($Q15) {
+#			$temp_num = -1*$num;
+#		} else {
+			$temp_num = 2**($num_of_bits-1) + $num;
+			if ($temp_num < 0 ) {
+				$temp_num = 0;
+			}
+#		}
+		my @temp_bits = dec_to_bit_arr($temp_num,$num_of_bits,0);
+		@bits = (1,@temp_bits[1..$num_of_bits-1]);
+	} else {
+		$bits[0] = 0;
+		while ($i < $num_of_bits) {
+			if ($num >= 2**($num_of_bits-$i-1)) {
+				$bits[$i]=1;
+				$num = $num - 2**($num_of_bits-$i-1);
+			} else {
+				$bits[$i] = 0;
+			}
+			$i++;
+		}
+	}
+	return @bits;
+}
+##############################################################
+sub bits_to_hexa($$) {
+	my @bits = split("",$_[0]);
+	my $num_of_bits = $_[1];
+	my $i = $num_of_bits-1;
+	my @hexa;
+	while ($i > 2) {
+		unshift @hexa, $bits2hexa{join("",@bits[($i-3)..$i])};
+		$i = $i - 4;
+	}
+	if ($i < 0) {
+		return join("",'x"',@hexa,'"');
+	} else {
+		return join("",('"',@bits[0..$i],'"&x"',@hexa,'"'));
+	}
+}
+##############################################################
+sub hexa_to_bits($) {
+	my $input = $_[0];
+	my @bits;
+	my @hexa;
+	my @out_bits;
+	my $var;
+	if ($input =~ /.(\d+).&x.((\d|\w)+)./) {
+		@bits = split("",$1);
+		@hexa = split("",$2);
+		while (scalar(@hexa) != 0) {
+			$var = pop(@hexa);
+			unshift @out_bits, $hexa2bits{$var};
+		}
+		while (scalar(@bits) != 0) {
+			$var = pop(@bits);
+			unshift @out_bits, $var;
+		}
+		return join("",@out_bits);
+	} elsif ($input =~ /x.((\d|\w)+)./) {
+		@hexa = split("",$1);
+		while (scalar(@hexa) != 0) {
+			$var = pop(@hexa);
+			unshift @out_bits, $hexa2bits{$var};
+		}
+		return join("",@out_bits);
+	}
+	return "";
+
+}
+##############################################################
+sub bits_to_dec($$) {
+	my @bits = split("",$_[0]);
+	my $Q15 = $_[1];
+	my $i = 0;
+	my $num = 0;
+	@bits = reverse @bits;
+	while ($i < (scalar(@bits)-1)) {
+		$num = $num + $bits[$i]*2**$i;
+		$i++;
+	}
+	if ($Q15) {
+		$num = $num/(2**$i);
+	}
+	if ($bits[$i]) {
+		if ($Q15) {
+			$num = -1*$num;
+		} else {
+			$num = -2**$i+$num;
+		}
+	} 
+	return $num;
+}
+##############################################################
+sub hexa_to_dec($$) {
+	my $bits = hexa_to_bits($_[0]);
+	return bits_to_dec($bits,$_[1]);
+}
 
 #####################################################
 #User chooses mode
@@ -92,68 +211,6 @@ sub parse_table {
 	}
 }
 
-##############################################################
-#Convert a number to a hexadecimal string of equal value
-#returns 0x"ffff" if number is too high
-sub dec_to_16bit($) {
-	my $num = $_[0];
-	my @hexa;
-	my $i = 3;
-	if ($num > 2**16-1) {
-		return 'x"ffff"';
-	}
-	while ($i >= 0) {
-		if ($num > 16**$i - 1) {
-			$hexa[3-$i] = $dec2hexa{$num/(16**$i)};
-			$num = $num % (16**$i);
-		} else {
-			$hexa[3-$i] = $dec2hexa{0};
-		}
-		$i = $i -1;
-	}
-	return "x\"$hexa[0]$hexa[1]$hexa[2]$hexa[3]\"";
-}
-
-##############################################################
-#Convert a number to a hexadecimal string of equal value
-#returns "11"&x"ff" if number is too high
-sub dec_to_10bit($) {
-	my $num = $_[0];
-	my @hexa;
-	my $i = 1;
-	if ($num > 2**10-1) {
-		return '"11"&x"ff"';
-	}
-	$hexa[0] = $dec2hexa{$num/(2**9)};
-	$num = $num % (2**9);
-	$hexa[1] = $dec2hexa{$num/(2**8)};
-	$num = $num % (2**8);	
-	while ($i >= 0) {
-		if ($num > 16**$i - 1) {
-			$hexa[3-$i] = $dec2hexa{$num/(16**$i)};
-			$num = $num % (16**$i);
-		} else {
-			$hexa[3-$i] = $dec2hexa{0};
-		}
-		$i = $i -1;
-	}
-	return "\"$hexa[0]$hexa[1]\"&x\"$hexa[2]$hexa[3]\"";
-}
-
-##############################################################
-#Convert a hexadecimal string to a number of equal value
-sub hexa_to_dec($) {
-	my $string = $_[0];
-	my $num;
-	if ($string =~ /.(\d)(\d).&x.(\d|\w)(\d|\w)./) {
-		$num = $1*2**9 + $2*2**8 + $hexa2dec{$3}*16 + $hexa2dec{$4};
-		return $num;
-	} elsif ($string =~ /x.(\d|\w)(\d|\w)(\d|\w)(\d|\w)./) {
-		$num = $hexa2dec{$1}*16**3 + $hexa2dec{$2}*16**2 + $hexa2dec{$3}*16 + $hexa2dec{$4};
-		return $num;
-	}
-	return "";
-}
 ################################################################
 #receive constant assembly declartion and insert VHDL constant declarations to the constants array
 sub constant_assembly_to_VHDL {
@@ -257,9 +314,9 @@ sub assembly_to_VHDL {
 		$flag = $8 if defined $8;
 		if (defined $assembly{"$cmd,$r_D,$r_A,$r_B"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,$r_D,$r_A,$r_B"});
-			$r_A_num = dec_to_10bit($r_A_num);
-			$r_D_num = dec_to_10bit($r_D_num);
-			$r_B_num = dec_to_16bit($r_B_num);
+			$r_A_num = dec_to_hexa($r_A_num,10,0);
+			$r_D_num = dec_to_hexa($r_D_num,10,0);
+			$r_B_num = dec_to_hexa($r_B_num,16,0);
 		} else {
 			print "ERROR! Could not interpert the following line:\n$line\n";
 			return "";
@@ -275,10 +332,14 @@ sub assembly_to_VHDL {
 		$flag = $7 if defined $7;
 		if (defined $assembly{"$cmd,$r_D,$r_A,IMM"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,$r_D,$r_A,IMM"});
-			$r_A_num = dec_to_10bit($r_A_num);
-			$r_D_num = dec_to_10bit($r_D_num);
+			$r_A_num = dec_to_hexa($r_A_num,10,0);
+			$r_D_num = dec_to_hexa($r_D_num,10,0);
 			if ($r_B_num =~ /\b\d+\b/) {
-				$r_B_num = dec_to_16bit($r_B_num);
+				if ($r_B_num < 1 && $r_B_num >= -1) {
+					$r_B_num = dec_to_hexa($r_B_num,16,1);
+				} else {
+					$r_B_num = dec_to_hexa($r_B_num,16,0);
+				}
 			}
 		} elsif ($r_B_num eq "modify_addr") {
 			$flag = $r_B_num;
@@ -297,14 +358,14 @@ sub assembly_to_VHDL {
 		$flag = $6 if defined $6;
 L1:		if (defined $assembly{"$cmd,$r_D,$r_A,"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,$r_D,$r_A,"});
-			$r_A_num = dec_to_10bit($r_A_num);
-			$r_D_num = dec_to_10bit($r_D_num);
-			$r_B_num = dec_to_16bit(0);
+			$r_A_num = dec_to_hexa($r_A_num,10,0);
+			$r_D_num = dec_to_hexa($r_D_num,10,0);
+			$r_B_num = dec_to_hexa(0,16,0);
 		} elsif (defined $assembly{"$cmd,,$r_D,$r_A"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,,$r_D,$r_A"});
-			$r_A_num = dec_to_10bit($r_D_num);
-			$r_D_num = dec_to_10bit(0);
-			$r_B_num = dec_to_16bit($r_A_num);
+			$r_A_num = dec_to_hexa($r_D_num,10,0);
+			$r_D_num = dec_to_hexa(0,10,0);
+			$r_B_num = dec_to_hexa($r_A_num,16,0);
 		} else {
 			print "ERROR! Could not interpert the following line:\n$line\n";
 			return "";
@@ -318,14 +379,26 @@ L1:		if (defined $assembly{"$cmd,$r_D,$r_A,"}) {
 		$flag = $5 if defined $5;
 		if (defined $assembly{"$cmd,$r_D,,IMM"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,$r_D,,IMM"});
-			$r_A_num = dec_to_10bit(0);
-			$r_D_num = dec_to_10bit($r_D_num);
-			$r_B_num = dec_to_16bit($r_B_num) if ($r_B_num =~ /\b\d+\b/);
+			$r_A_num = dec_to_hexa(0,10,0);
+			$r_D_num = dec_to_hexa($r_D_num,10,0);
+			if ($r_B_num =~ /\b\d+\b/) {
+				if ($r_B_num < 1 && $r_B_num >= -1) {
+					$r_B_num = dec_to_hexa($r_B_num,16,1);
+				} else {
+					$r_B_num = dec_to_hexa($r_B_num,16,0);
+				}
+			}
 		} elsif (defined $assembly{"$cmd,,$r_D,IMM"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,,$r_D,IMM"});
-			$r_A_num = dec_to_10bit($r_D_num);
-			$r_D_num = dec_to_10bit(0);
-			$r_B_num = dec_to_16bit($r_B_num) if ($r_B_num =~ /\b\d+\b/);
+			$r_A_num = dec_to_hexa($r_D_num,10,0);
+			$r_D_num = dec_to_hexa(0,10,0);
+			if ($r_B_num =~ /\b\d+\b/) {
+				if ($r_B_num < 1 && $r_B_num >= -1) {
+					$r_B_num = dec_to_hexa($r_B_num,16,1);
+				} else {
+					$r_B_num = dec_to_hexa($r_B_num,16,0);
+				}
+			}
 		} else {
 			print "ERROR! Could not interpert the following line:\n$line\n";
 			return "";
@@ -338,9 +411,9 @@ L1:		if (defined $assembly{"$cmd,$r_D,$r_A,"}) {
 		$flag = $4 if defined $4;
 		if (defined $assembly{"$cmd,$r_D,,"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,$r_D,,"});
-			$r_A_num = dec_to_10bit(0);
-			$r_D_num = dec_to_10bit($r_D_num);
-			$r_B_num = dec_to_16bit(0);
+			$r_A_num = dec_to_hexa(0,10,0);
+			$r_D_num = dec_to_hexa($r_D_num,10,0);
+			$r_B_num = dec_to_hexa(0,16,0);
 		} else {
 			print "ERROR! Could not interpert the following line:\n$line\n";
 			return "";
@@ -350,9 +423,9 @@ L1:		if (defined $assembly{"$cmd,$r_D,$r_A,"}) {
 		$cmd = $1;
 		if (defined $assembly{"$cmd,,,"}) {
 			($opcode, $subopcode) = split(',', $assembly{"$cmd,,,"});
-			$r_A_num = dec_to_10bit(0);
-			$r_D_num = dec_to_10bit(0);
-			$r_B_num = dec_to_16bit(0);
+			$r_A_num = dec_to_hexa(0,10,0);
+			$r_D_num = dec_to_hexa(0,10,0);
+			$r_B_num = dec_to_hexa(0,16,0);
 		} else {
 			print "ERROR! Could not interpert the following line:\n$line\n";
 			return "";
@@ -387,8 +460,8 @@ sub VHDL_to_assembly {
 	my $flag = "";
 	if ($line =~ /\s*pack_i_general\(\s*\(.\d.,\s*(\S+)\s*,\s*.\d.\s*,\s*("\d\d"&x"\S\S")\s*,\s*("\d\d"&x"\S\S")\s*,\s*(\S+|\(others => '0'\))\s*,\s*(\S+|\(others => '0'\))\s*,\s*.(\d).\s*\)\s*\)\s*.*/) {
 		$opcode = $1;
-		$r_D_num = hexa_to_dec($2);
-		$r_A_num = hexa_to_dec($3);
+		$r_D_num = hexa_to_dec($2,0);
+		$r_A_num = hexa_to_dec($3,0);
 		$r_B_num = $4;
 		$r_B_num = 'x"0000"' if ($r_B_num eq "(others => '0')");
 		$subopcode = $5;
@@ -402,7 +475,7 @@ sub VHDL_to_assembly {
 		$r_D_num = "" if ($r_D eq "");
 		$r_A_num = "" if ($r_A eq "");
 		if ($r_B_num =~ /(x"(\d|\w)(\d|\w)(\d|\w)(\d|\w)")/) {
-			$r_B_num = hexa_to_dec($r_B_num);
+			$r_B_num = hexa_to_dec($r_B_num,0);
 		}
 		$r_B_num = "" if ($r_B eq "");
 		$r_B = "" if ($r_B eq "IMM");
@@ -423,9 +496,6 @@ sub VHDL_to_assembly {
 			$num = $end_address - $count;
 		}
 		return "bkrep $num $reps\n";
-	} else {
-		print "ERROR! The following line could not be interperted:\n$line\n";
-		return "";
 	}
 }
 
@@ -480,7 +550,7 @@ sub mode2_sub {
 		chomp($line);
 		if ($line =~ /\s*end\s*/) {
 			unshift @constants, "\tconstant KERNEL_LEN\t\t: integer := $address;\n";
-			return;
+			return $name;
 		} elsif ($line =~ /\s*cancel\s*/) {
 			if ($cancel_flag == 1) {
 				print "You can't use cancel twice in a row.\n";
