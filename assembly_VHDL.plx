@@ -514,6 +514,8 @@ sub mode3_sub {
 		chomp($line);
 		if ($line =~ /\s*constant.*/) {
 			constant_VHDL_to_assembly($line);
+		} elsif ($line =~ /^\s*--.*/ && $line !~ /^\s*--\d+ : .*/) {
+			push @body, "$line\n";
 		} elsif ($line =~ /\s*pack_i_.*/) {
 			$line = VHDL_to_assembly($line, $address);
 			push @body, $line;
@@ -564,6 +566,8 @@ sub mode2_sub {
 				$address--;
 				$cancel_flag = 1;
 			}
+		} elsif ($line =~ /^\s*--.*/ && $line !~ /^\s*--\d+ : .*/) {
+			push @body, "$line\n";
 		} elsif ($line =~ /\s*constant.*/) {
 			constant_assembly_to_VHDL($line);
 			$cancel_flag = 0;
@@ -600,6 +604,8 @@ sub mode1_sub {
 		chomp($line);
 		if ($line =~ /\s*constant.*/) {
 			constant_assembly_to_VHDL($line);
+		} elsif ($line =~ /^\s*--.*/ && $line !~ /^\s*--\d+ : .*/) {
+			push @body, "$line\n";
 		} else {
 			push @body, "\t\t--$address : $line\n";
 			$line = assembly_to_VHDL($line,$address);
