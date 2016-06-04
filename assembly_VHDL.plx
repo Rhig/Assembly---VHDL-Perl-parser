@@ -2,8 +2,9 @@
 #parser.plx
 use warnings;
 use strict;
+use POSIX ();
 use Math::Round;
-sub dec_to_hexa; sub modulus_fractions; sub dec_to_bit_arr; sub bits_to_hexa; sub hexa_to_bits; sub bits_to_dec; sub hexa_to_dec; sub setup; sub mode1n2_sub; sub mode1_sub; sub mode2_sub; sub mode3_sub; sub get_input; sub assembly_to_VHDL; sub parse_table; sub dec_to_10bit; sub dec_to_16bit; sub constant_assembly_to_VHDL; sub constant_VHDL_to_assembly; sub VHDL_to_assembly;
+sub dec_to_hexa; sub modulus_fractions; sub dec_to_bit_arr; sub bits_to_hexa; sub hexa_to_bits; sub bits_to_dec; sub hexa_to_dec; sub setup; sub mode1n2_sub; sub mode1_sub; sub mode2_sub; sub mode3_sub; sub get_input; sub assembly_to_VHDL; sub parse_table; sub dec_to_10bit; sub dec_to_16bit; sub constant_assembly_to_VHDL; sub constant_VHDL_to_assembly; sub VHDL_to_assembly; sub record_registers; sub write_config;
 
 #globals:
 our %assembly;
@@ -12,12 +13,115 @@ our @header;
 our @constants;
 our @body;
 our @footer;
+our @registers;
+our @old_file;
 our %bits2hexa = ("0000" => '0', "0001" => '1', "0010" => '2', "0011" => '3',
 		 "0100" => '4', "0101" => '5', "0110" => '6', "0111" => '7',
 		 "1000" => '8', "1001" => '9', "1010" => 'a', "1011" => 'b',
 		 "1100" => 'c', "1101" => 'd', "1110" => 'e', "1111" => 'f');
 our %hexa2bits = reverse %bits2hexa;
 our %addresses;
+
+#############################################################
+#
+sub write_config {
+	my $line;
+	my $num_of_GRBs = 0;
+	my $num_of_ARBs = 0;
+	my $num_of_ACRBs = 0;
+	my $reg;
+	my $num_of_blocks = 0;
+	my $num_of_warps = 0;
+	my $num_of_cells=0;
+	while ($line = shift @old_file) {
+		if ($line !~ /^\s*--/ && $line !~ /\s*constant/) {
+			record_registers(split(' ',$line));
+		}
+	}
+	foreach $reg (@registers) {
+		if ($reg =~ /ARB/) {
+			$num_of_ARBs++;
+		} elsif ($reg =~ /GRB/) {
+			$num_of_GRBs++;
+		} elsif ($reg =~ /ACRB/) {
+			$num_of_ACRBs++;
+		}
+	}
+	print "Starting configuration:\n";
+	print "Please write the number of blocks in this program:\nconfig> ";
+	while ($line = <>) {
+		chomp($line);
+		if ($line !~ /^\s*\d+\s*$/) {
+			print "$line is not a positive integer! Please try again:\nconfig> ";
+		} else {
+			$num_of_blocks = $line;
+			last;
+		}
+	}
+	print "Please write the number of warps per block in this program:\nconfig> ";
+	while ($line = <>) {
+		chomp($line);
+		if ($line !~ /^\s*\d+\s*$/) {
+			print "$line is not a positive integer! Please try again:\nconfig> ";
+		} else {
+			$num_of_warps = $line;
+			last;
+		}
+	}
+	print "Please write the number of shared memory cells per block needed in this program:\nconfig> ";
+	while ($line = <>) {
+		chomp($line);
+		if ($line !~ /^\s*\d+\s*$/) {
+			print "$line is not a positive integer! Please try again:\nconfig> ";
+		} else {
+			$num_of_cells = $line;
+			last;
+		}
+	}
+	my $num_of_lines = POSIX::ceil($num_of_cells/8);
+	my @config;
+	my $len = 7 + $num_of_blocks + 4*$num_of_warps*$num_of_blocks;
+	push @config, "\tconstant CONF_LEN	: integer := $len;\n";
+	push @config, "\tconstant conf_arr	: conf_arr_type(0 to  CONF_LEN - 1) :=\n";
+	push @config, "\t\t(core_conf_rst) & (core_conf_rst) & -- giving the CORE a bit of time to start\n";
+	for (my $i=0; $i < $num_of_blocks ; $i++) {
+		for (my $j = 0; $j < $num_of_warps ; $j++) {
+			push @config, "\t\tconf_warp($j,$i,(others => '1')) &\n";
+		}
+		my $temp_warps = $num_of_warps - 1;
+		push @config, "\t\t(conf_block($i,$i,$temp_warps)) &\n";
+	}
+	my $temp_ACRBs = POSIX::ceil($num_of_ACRBs/2);
+	push @config, "\t\tconf_param($num_of_GRBs,$num_of_ARBs,$temp_ACRBs,$num_of_lines,$num_of_warps) &\n";
+	push @config, "\t\t(core_conf_rst)\n\t\t;\n";
+	unshift @constants, @config;
+	print "Configuration finished!\n";
+}
+
+##############################################################
+#Recieves any number of registers as input, stores them in the global "registers" array if they were not in the array before.
+sub record_registers {
+	my @new_regs=@_;
+	my $new_reg;
+	my $flag=0;
+	my $reg;
+	foreach $new_reg (@new_regs) {
+		if ($new_reg !~ /(A|G|AC)RB\d/) {
+			next;
+		}
+		$flag=0;
+		foreach $reg (@registers) {
+			if ($reg eq $new_reg) {
+				$flag=1;
+				last;
+			}
+		}
+		if ($flag == 0) {
+			push @registers, $new_reg;
+		}
+	}
+	return;
+}
 
 ##############################################################
 #Convert a number to a hexadecimal string of equal value
@@ -507,10 +611,13 @@ sub mode3_sub {
 	my $address = 0;
 	($fd, $name) = get_input;
 	my $line = <$fd>;
+	push @old_file, $line;
 	while ($line !~ /\s*package \S+ is\s*/) {
 		$line = <$fd>;
+		push @old_file, $line;
 	}
 	while ($line = <$fd>) {
+		push @old_file, $line;
 		chomp($line);
 		if ($line =~ /\s*constant.*/) {
 			constant_VHDL_to_assembly($line);
@@ -549,6 +656,7 @@ sub mode2_sub {
 	print "Please write assembly commands. After each command, you will be presented with the VHDL translation, and it will be saved.\n";
 	print "Write 'end' to finish writing the program. Write 'cancel' to cancel the latest line you've written.\n";
 	while ($line = <>) {
+		push @old_file, $line;
 		chomp($line);
 		if ($line =~ /\s*end\s*/) {
 			unshift @constants, "\tconstant KERNEL_LEN\t\t: integer := $address;\n";
@@ -601,6 +709,7 @@ sub mode1_sub {
 	my $line;
 	my $address=0;
 	while ($line = <$fd>) {
+		push @old_file, $line;
 		chomp($line);
 		if ($line =~ /\s*constant.*/) {
 			constant_assembly_to_VHDL($line);
@@ -643,6 +752,7 @@ sub mode1n2_sub {
 	} else {
 		print "ERROR! Illegal mode given to mode1n2_sub!\n";
 	}
+	write_config;
 	return $name;
 }
 
