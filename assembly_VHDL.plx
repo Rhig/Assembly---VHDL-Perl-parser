@@ -80,7 +80,7 @@ sub write_config {
 	}
 	my $num_of_lines = POSIX::ceil($num_of_cells/8);
 	my @config;
-	my $len = 7 + $num_of_blocks + 4*$num_of_warps*$num_of_blocks;
+	my $len = 8 + $num_of_blocks + 4*$num_of_warps*$num_of_blocks;
 	push @config, "\tconstant CONF_LEN	: integer := $len;\n";
 	push @config, "\tconstant conf_arr	: conf_arr_type(0 to  CONF_LEN - 1) :=\n";
 	push @config, "\t\t(core_conf_rst) & (core_conf_rst) & -- giving the CORE a bit of time to start\n";
